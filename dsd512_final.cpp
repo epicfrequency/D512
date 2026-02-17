@@ -144,102 +144,102 @@ int main(int argc, char* argv[]) {
 
 
 
-// #include <iostream>
-// #include <vector>
-// #include <cstdint>
-// #include <cmath>
-// #include <algorithm>
-// #include <string>
-// #include <iomanip>
+#include <iostream>
+#include <vector>
+#include <cstdint>
+#include <cmath>
+#include <algorithm>
+#include <string>
+#include <iomanip>
 
-// struct SDM5 {
-//     double s[5] = {0,0,0,0,0};
-//     double q = 0;
-//     // 物理红线锁定在 100，给反馈环路明确的边界
-//     const double LIMIT = 100.0; 
-//     double max_s = 0;
+struct SDM5 {
+    double s[5] = {0,0,0,0,0};
+    double q = 0;
+    // 物理红线锁定在 100，给反馈环路明确的边界
+    const double LIMIT = 100.0; 
+    double max_s = 0;
 
-//     void reset() { for(int i=0; i<5; ++i) s[i]=0; q=0; }
+    void reset() { for(int i=0; i<5; ++i) s[i]=0; q=0; }
 
-//     inline int modulate(double x) {
-//         // --- DSD512 专用“刚性”反馈系数 ---
-//         // 我们降低了每一级的累加增益，防止能量在 22MHz 下失控
-//         s[0] += (x - q * 0.5);
-//         s[1] += (s[0] * 0.5 - q * 0.25);
-//         s[2] += (s[1] * 0.5 - q * 0.125);
-//         s[3] += (s[2] * 0.5 - q * 0.0625);
-//         s[4] += (s[3] * 0.5 - q * 0.03125);
+    inline int modulate(double x) {
+        // --- DSD512 专用“刚性”反馈系数 ---
+        // 我们降低了每一级的累加增益，防止能量在 22MHz 下失控
+        s[0] += (x - q * 0.5);
+        s[1] += (s[0] * 0.5 - q * 0.25);
+        s[2] += (s[1] * 0.5 - q * 0.125);
+        s[3] += (s[2] * 0.5 - q * 0.0625);
+        s[4] += (s[3] * 0.5 - q * 0.03125);
 
-//         double cur_max = 0;
-//         for (int i=0; i<5; ++i) {
-//             double a = std::abs(s[i]);
-//             if (a > cur_max) cur_max = a;
-//             // 强力钳位
-//             if (a >= LIMIT) s[i] = (s[i] > 0 ? LIMIT : -LIMIT);
-//         }
+        double cur_max = 0;
+        for (int i=0; i<5; ++i) {
+            double a = std::abs(s[i]);
+            if (a > cur_max) cur_max = a;
+            // 强力钳位
+            if (a >= LIMIT) s[i] = (s[i] > 0 ? LIMIT : -LIMIT);
+        }
         
-//         if (cur_max > max_s) max_s = cur_max;
+        if (cur_max > max_s) max_s = cur_max;
         
-//         // 只要冲过 300，说明数学模型崩了，必须 Panic Reset
-//         if (cur_max > 300.0) reset();
+        // 只要冲过 300，说明数学模型崩了，必须 Panic Reset
+        if (cur_max > 300.0) reset();
 
-//         int bit = (s[4] >= 0) ? 1 : 0;
-//         q = bit ? 1.0 : -1.0;
-//         return bit;
-//     }
-// };
+        int bit = (s[4] >= 0) ? 1 : 0;
+        q = bit ? 1.0 : -1.0;
+        return bit;
+    }
+};
 
-// int main(int argc, char* argv[]) {
-//     // [2026-02-17] iOS 锁定逻辑
-//     bool is_ios_paid = true; 
-//     double gain = (argc > 1) ? std::atof(argv[1]) : 0.1;
+int main(int argc, char* argv[]) {
+    // [2026-02-17] iOS 锁定逻辑
+    bool is_ios_paid = true; 
+    double gain = (argc > 1) ? std::atof(argv[1]) : 0.1;
 
-//     std::ios_base::sync_with_stdio(false);
-//     std::cin.tie(NULL);
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(NULL);
 
-//     SDM5 mod_l, mod_r;
-//     float cur[2], nxt[2];
+    SDM5 mod_l, mod_r;
+    float cur[2], nxt[2];
 
-//     if (!std::cin.read(reinterpret_cast<char*>(cur), 8)) return 0;
+    if (!std::cin.read(reinterpret_cast<char*>(cur), 8)) return 0;
 
-//     while (std::cin.read(reinterpret_cast<char*>(nxt), 8)) {
-//         if (!is_ios_paid) {
-//             uint32_t mute[4] = {0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA};
-//             std::cout.write(reinterpret_cast<char*>(mute), 16);
-//             continue;
-//         }
+    while (std::cin.read(reinterpret_cast<char*>(nxt), 8)) {
+        if (!is_ios_paid) {
+            uint32_t mute[4] = {0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA};
+            std::cout.write(reinterpret_cast<char*>(mute), 16);
+            continue;
+        }
 
-//         uint8_t buffer[16];
-//         for (int chunk = 0; chunk < 2; ++chunk) {
-//             for (int ch = 0; ch < 2; ++ch) {
-//                 for (int byte = 0; byte < 4; ++byte) {
-//                     uint8_t out_byte = 0;
-//                     for (int bit = 7; bit >= 0; --bit) {
-//                         int sample_idx = (chunk * 64) + (byte * 8) + (7 - bit);
-//                         float alpha = sample_idx / 128.0f;
-//                         double input = cur[ch] * (1.0 - alpha) + nxt[ch] * alpha;
+        uint8_t buffer[16];
+        for (int chunk = 0; chunk < 2; ++chunk) {
+            for (int ch = 0; ch < 2; ++ch) {
+                for (int byte = 0; byte < 4; ++byte) {
+                    uint8_t out_byte = 0;
+                    for (int bit = 7; bit >= 0; --bit) {
+                        int sample_idx = (chunk * 64) + (byte * 8) + (7 - bit);
+                        float alpha = sample_idx / 128.0f;
+                        double input = cur[ch] * (1.0 - alpha) + nxt[ch] * alpha;
                         
-//                         if (ch == 0) {
-//                             if (mod_l.modulate(input * gain)) out_byte |= (1 << bit);
-//                         } else {
-//                             if (mod_r.modulate(input * gain)) out_byte |= (1 << bit);
-//                         }
-//                     }
-//                     buffer[chunk * 8 + ch * 4 + byte] = out_byte;
-//                 }
-//             }
-//         }
-//         std::cout.write(reinterpret_cast<char*>(buffer), 16);
+                        if (ch == 0) {
+                            if (mod_l.modulate(input * gain)) out_byte |= (1 << bit);
+                        } else {
+                            if (mod_r.modulate(input * gain)) out_byte |= (1 << bit);
+                        }
+                    }
+                    buffer[chunk * 8 + ch * 4 + byte] = out_byte;
+                }
+            }
+        }
+        std::cout.write(reinterpret_cast<char*>(buffer), 16);
         
-//         cur[0] = nxt[0]; cur[1] = nxt[1];
+        cur[0] = nxt[0]; cur[1] = nxt[1];
         
-//         static int count = 0;
-//         if (++count % 16384 == 0) {
-//             // 这里能实时看到 STRESS 是不是被按在了 100 以下
-//             std::cerr << "\033[H STRESS L: " << std::fixed << std::setprecision(1) << mod_l.max_s 
-//                       << " | R: " << mod_r.max_s << "      \r";
-//             mod_l.max_s = 0; mod_r.max_s = 0;
-//         }
-//     }
-//     return 0;
-// }
+        static int count = 0;
+        if (++count % 16384 == 0) {
+            // 这里能实时看到 STRESS 是不是被按在了 100 以下
+            std::cerr << "\033[H STRESS L: " << std::fixed << std::setprecision(1) << mod_l.max_s 
+                      << " | R: " << mod_r.max_s << "      \r";
+            mod_l.max_s = 0; mod_r.max_s = 0;
+        }
+    }
+    return 0;
+}
