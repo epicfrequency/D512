@@ -1,48 +1,42 @@
 #!/bin/bash
 
-# --- 配置区 ---
-PIPE_PATH="/tmp/mpd_dsd_pipe"
-ENGINE_BIN="./dsd512_final"
-SOURCE_CODE="dsd512_final.cpp"
-# DAC 采样率：DSD512 (48k系) = 24.576MHz -> 32位PCM封装下为 768k
-SAMPLERATE=768000 
+# ==========================================================
+# LUMEN Hi-Fi 启动脚本 - DSD512 实时控制台
+# ==========================================================
 
-# --- 1. 自动化编译 (针对树莓派5硬件优化) ---
-echo -e "\033[1;33m[BUILD] Compiling Engine for ARM Cortex-A76...\033[0m"
-g++ -O3 -march=native -ffast-math -funroll-loops "$SOURCE_CODE" -o "$ENGINE_BIN"
+# 1. 配置参数解析
+# 默认增益 0.25 (约 -12dB)，可从命令行传入覆盖：例如 ./run_hifi.sh 0.35
+USER_GAIN=${1:-0.25}
 
-if [ $? -ne 0 ]; then
-    echo -e "\033[1;31m[ERROR] Compilation failed! Check your C++ code.\033[0m"
-    exit 1
+PIPE_PATH="/tmp/mpd_dsd_pipe"  # 与 mpd.conf 对应的命名管道路径
+ENGINE_BIN="./dsd512_final"    # 编译后的二进制文件名
+SOURCE_CODE="dsd512_final.cpp" # 源代码文件名
+
+# 2. 自动检查并编译
+# 使用 -nt (newer than) 判断源码是否被修改过
+if [ ! -f "$ENGINE_BIN" ] || [ "$SOURCE_CODE" -nt "$ENGINE_BIN" ]; then
+    echo -e "\033[1;33m[BUILD] 检测到源码更新或二进制文件缺失，正在编译...\033[0m"
+    # -O3: 最高级优化
+    # -march=native: 针对树莓派5核心(Cortex-A76)进行硬件加速
+    # -ffast-math: 牺牲极小精度换取大幅浮点运算速度提升
+    g++ -O3 -march=native -ffast-math -funroll-loops "$SOURCE_CODE" -o "$ENGINE_BIN"
 fi
 
-# --- 2. 管道环境准备 ---
-if [ ! -p "$PIPE_PATH" ]; then
-    rm -f "$PIPE_PATH"
-    mkfifo "$PIPE_PATH"
-fi
+# 3. 管道环境预处理
+[ -p "$PIPE_PATH" ] || mkfifo "$PIPE_PATH"
 
-# --- 3. 运行前清理 ---
-# 杀死可能残留在后台的 aplay 或引擎进程，防止占用硬件
-killall -9 aplay 2>/dev/null
-killall -9 "$ENGINE_BIN" 2>/dev/null
+# 4. 强制杀死旧的残留进程，释放音频硬件资源
+killall -9 aplay "$ENGINE_BIN" 2>/dev/null
 
-echo -e "\033[1;34m------------------------------------------------\033[0m"
-echo -e "\033[1;34m  LUMEN AUDIO CONSOLE v1.0 - HIGH-END DSD512    \033[0m"
-echo -e "\033[1;34m  Input: 384kHz PCM | Output: 24.576MHz Native  \033[0m"
-echo -e "\033[1;34m------------------------------------------------\033[0m"
+echo -e "\033[1;34m================================================\033[0m"
+echo -e "\033[1;34m  LUMEN Hi-Fi Console - Independent Clip Alarm  \033[0m"
+echo -e "\033[1;34m  架构: 384kHz PCM -> DSD512 Realtime           \033[0m"
+echo -e "\033[1;34m================================================\033[0m"
 
-# --- 4. 核心链路启动 ---
-# 解释：
-# - cat: 从管道读取 MPD 喂过来的 384k 流
-# - taskset -c 2,3: 将计算量巨大的引擎锁定在 CPU 2和3号核心，避免被系统任务打断
-# - chrt -f 99: 设置实时调度优先级(最高级)
-# - aplay -q: 静默模式运行，让出终端给 VU Meter
-# - -B 100000: 设置 100ms 硬件缓冲区，防止在高负载下出现 Underrun (咔嗒声)
-
+# 5. 启动核心链路
+# cat 从管道读取数据 -> taskset 锁定核心 2&3 运行引擎 -> aplay 播放
+# -B 100000: 设置 100ms 缓冲区
+# 2>/dev/null: 屏蔽 aplay 的标准错误输出，确保 VU 表在终端不闪烁
 cat "$PIPE_PATH" | \
-taskset -c 2,3 chrt -f 99 "$ENGINE_BIN" | \
-aplay -D hw:0,0 -c 2 -f DSD_U32_BE -r $SAMPLERATE -q -B 100000
-
-# --- 5. 退出处理 ---
-echo -e "\n\033[1;31m[STOP] Engine stopped.\033[0m"
+taskset -c 2,3 chrt -f 99 "$ENGINE_BIN" "$USER_GAIN" | \
+aplay -D hw:0,0 -c 2 -f DSD_U32_BE -r 768000 -q -B 100000 2>/dev/null
