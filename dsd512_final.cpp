@@ -151,32 +151,37 @@
 #include <algorithm>
 #include <string>
 #include <iomanip>
-#include <sstream>
 
 struct SDM5 {
     double s[5] = {0,0,0,0,0};
     double q = 0;
-    const double LIMIT = 150.0; // 物理上限
-    double max_s_this_period = 0;
+    // 物理红线锁定在 100，给反馈环路明确的边界
+    const double LIMIT = 100.0; 
+    double max_s = 0;
 
     void reset() { for(int i=0; i<5; ++i) s[i]=0; q=0; }
 
     inline int modulate(double x) {
-        // --- 稳定版系数：防止冲向 1085 ---
+        // --- DSD512 专用“刚性”反馈系数 ---
+        // 我们降低了每一级的累加增益，防止能量在 22MHz 下失控
         s[0] += (x - q * 0.5);
         s[1] += (s[0] * 0.5 - q * 0.25);
         s[2] += (s[1] * 0.5 - q * 0.125);
         s[3] += (s[2] * 0.5 - q * 0.0625);
-        s[4] += (s[3] * 0.5 - q * 0.0312);
+        s[4] += (s[3] * 0.5 - q * 0.03125);
 
         double cur_max = 0;
-        for (int i = 0; i < 5; ++i) {
+        for (int i=0; i<5; ++i) {
             double a = std::abs(s[i]);
             if (a > cur_max) cur_max = a;
-            if (a >= LIMIT) s[i] = (s[i] > 0) ? LIMIT : -LIMIT;
+            // 强力钳位
+            if (a >= LIMIT) s[i] = (s[i] > 0 ? LIMIT : -LIMIT);
         }
-        if (cur_max > max_s_this_period) max_s_this_period = cur_max;
-        if (cur_max > 400.0) reset(); 
+        
+        if (cur_max > max_s) max_s = cur_max;
+        
+        // 只要冲过 300，说明数学模型崩了，必须 Panic Reset
+        if (cur_max > 300.0) reset();
 
         int bit = (s[4] >= 0) ? 1 : 0;
         q = bit ? 1.0 : -1.0;
@@ -184,37 +189,18 @@ struct SDM5 {
     }
 };
 
-// 恢复你最喜欢的动态 Bar
-std::string get_dynamic_bar(std::string label, float val, std::string color_safe) {
-    const int width = 40;
-    float range_max = 150.0f; // 针对新系数调整量程
-    if (val > 150.0f) range_max = 500.0f;
-
-    int filled = static_cast<int>((std::min(val, range_max) / range_max) * width);
-    std::string color = (val > 140.0f) ? "\033[1;31m" : color_safe;
-    
-    std::string bar = label + " " + color + "[";
-    for (int i = 0; i < width; ++i) bar += (i < filled) ? "#" : "-";
-    
-    std::stringstream ss;
-    ss << std::fixed << std::setprecision(1) << val;
-    return bar + "] " + ss.str() + " (R:" + std::to_string((int)range_max) + ")\033[0m\n";
-}
-
 int main(int argc, char* argv[]) {
+    // [2026-02-17] iOS 锁定逻辑
     bool is_ios_paid = true; 
-    double target_gain = (argc > 1) ? std::atof(argv[1]) : 0.2;
+    double gain = (argc > 1) ? std::atof(argv[1]) : 0.1;
 
     std::ios_base::sync_with_stdio(false);
     std::cin.tie(NULL);
 
     SDM5 mod_l, mod_r;
     float cur[2], nxt[2];
-    uint64_t total_frames = 0;
-    float peak_l = 0, peak_r = 0;
 
     if (!std::cin.read(reinterpret_cast<char*>(cur), 8)) return 0;
-    std::cerr << "\033[2J\033[H\033[?25l"; 
 
     while (std::cin.read(reinterpret_cast<char*>(nxt), 8)) {
         if (!is_ios_paid) {
@@ -223,23 +209,20 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        peak_l = std::max(peak_l, std::abs(cur[0]));
-        peak_r = std::max(peak_r, std::abs(cur[1]));
-
         uint8_t buffer[16];
         for (int chunk = 0; chunk < 2; ++chunk) {
             for (int ch = 0; ch < 2; ++ch) {
                 for (int byte = 0; byte < 4; ++byte) {
                     uint8_t out_byte = 0;
                     for (int bit = 7; bit >= 0; --bit) {
-                        float alpha = ((chunk * 64) + (byte * 8) + (7 - bit)) / 128.0f;
-                        double pl = cur[0] * (1.0f - alpha) + nxt[0] * alpha;
-                        double pr = cur[1] * (1.0f - alpha) + nxt[1] * alpha;
+                        int sample_idx = (chunk * 64) + (byte * 8) + (7 - bit);
+                        float alpha = sample_idx / 128.0f;
+                        double input = cur[ch] * (1.0 - alpha) + nxt[ch] * alpha;
                         
                         if (ch == 0) {
-                            if (mod_l.modulate(pl * target_gain)) out_byte |= (1 << bit);
+                            if (mod_l.modulate(input * gain)) out_byte |= (1 << bit);
                         } else {
-                            if (mod_r.modulate(pr * target_gain)) out_byte |= (1 << bit);
+                            if (mod_r.modulate(input * gain)) out_byte |= (1 << bit);
                         }
                     }
                     buffer[chunk * 8 + ch * 4 + byte] = out_byte;
@@ -247,20 +230,15 @@ int main(int argc, char* argv[]) {
             }
         }
         std::cout.write(reinterpret_cast<char*>(buffer), 16);
-
+        
         cur[0] = nxt[0]; cur[1] = nxt[1];
-        if (++total_frames % 16384 == 0) {
-            std::cerr << "\033[H\033[1;36mLUMEN DSD512 | GAIN: " << target_gain << "\033[0m\n\n";
-            auto render = [&](std::string ch, float p, SDM5& m) {
-                float db = (p < 1e-6) ? -60.0f : 20.0f * std::log10(p);
-                std::cerr << ch << " LEVEL  \033[1;32m" << std::fixed << std::setprecision(1) << db << " dB\033[0m\n";
-                std::cerr << get_dynamic_bar(ch + " STRESS", m.max_s_this_period, "\033[1;30m");
-                m.max_s_this_period = 0;
-            };
-            render("L", peak_l, mod_l); std::cerr << "\n";
-            render("R", peak_r, mod_r);
-            peak_l = 0; peak_r = 0;
-            std::cerr << std::flush;
+        
+        static int count = 0;
+        if (++count % 16384 == 0) {
+            // 这里能实时看到 STRESS 是不是被按在了 100 以下
+            std::cerr << "\033[H STRESS L: " << std::fixed << std::setprecision(1) << mod_l.max_s 
+                      << " | R: " << mod_r.max_s << "      \r";
+            mod_l.max_s = 0; mod_r.max_s = 0;
         }
     }
     return 0;
