@@ -42,4 +42,7 @@ echo -e "\033[1;34m------------------------------------------------\033[0m"
 
 cat "$PIPE_PATH" | \
 taskset -c 2,3 chrt -f 99 "$ENGINE_BIN" | \
-aplay
+aplay -D hw:0,0 -c 2 -f DSD_U32_BE -r $SAMPLERATE -q -B 100000
+
+# --- 5. 退出处理 ---
+echo -e "\n\033[1;31m[STOP] Engine stopped.\033[0m"
