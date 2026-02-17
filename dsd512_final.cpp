@@ -155,8 +155,8 @@
 struct SDM5 {
     double s[5] = {0,0,0,0,0};
     double q = 0;
-    const double LIMIT = 70.0;
-    double gain_factor = 0.25;
+    const double LIMIT = 100.0;
+    double gain_factor = 0.5;
     
     // 监控
     double max_s_this_period = 0;
