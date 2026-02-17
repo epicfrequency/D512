@@ -1,0 +1,20 @@
+
+
+g++ -O3 -march=native -ffast-math -flto dsd512_final.cpp -o dsd512_final
+ cat /proc/asound/card0/pcm0p/sub0/hw_params
+cat /tmp/mpd_dsd_pipe | chrt -f 99 ./dsd512_final | aplay -D hw:0,0 -c 2 -f DSD_U32_BE -r 768000
+
+
+
+audio_output {
+    type        "pipe"
+    name        "DSD512_Upsampler"
+    command     "cat > /tmp/mpd_dsd_pipe"
+    format      "384000:f:2"
+# 这里固定 352.8k Float
+}
+
+resampler {
+        plugin  "soxr"
+        quality "very high"
+        }
